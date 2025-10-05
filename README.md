@@ -33,7 +33,7 @@ df-bq-tests/
 
 1. **Clone or navigate to this directory:**
    ```bash
-   cd /Users/xqhu/Trae/df-bq-tests
+   cd df-bq-tests
    ```
 
 2. **Set up GCP authentication:**
