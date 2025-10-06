@@ -235,7 +235,7 @@ java.lang.IllegalArgumentException: Can not set java.util.List field com.google.
 ### Notes
 
 - The `LargeBatchBugReproduction` pipeline is designed to fail with the specific error - this is expected behavior for bug reproduction
-- The bug only occurs with Storage API (`STORAGE_API_AT_LEAST_ONCE` method) and dynamic destinations
+- The bug occurs with Storage API (`STORAGE_API_AT_LEAST_ONCE` method) and dynamic destinations
 - Use this pipeline for the most reliable reproduction of the exact error condition
 
 ## Expected Error
