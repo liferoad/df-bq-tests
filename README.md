@@ -156,6 +156,32 @@ mvn compile exec:java \
                --tempLocation=gs://tmp_xqhu/temp"
 ```
 
+#### Test with Workaround Enabled (Large Batch Pipeline)
+To test the workaround that prevents the Storage API 'f' field bug using `withFormatRecordOnFailureFunction`:
+
+```bash
+mvn compile exec:java \
+  -Dexec.mainClass=com.example.LargeBatchBugReproduction \
+  -Dexec.args="--project=manav-jit-test \
+               --dataset=test \
+               --baseTableName=large_batch_bug_test_workaround \
+               --runner=DirectRunner \
+               --enableWorkaround=true"
+```
+
+#### Test Workaround with Dataflow Runner (Large Batch Pipeline)
+```bash
+mvn compile exec:java \
+  -Dexec.mainClass=com.example.LargeBatchBugReproduction \
+  -Dexec.args="--project=manav-jit-test \
+               --dataset=test \
+               --baseTableName=large_batch_bug_test_workaround \
+               --runner=DataflowRunner \
+               --region=us-central1 \
+               --tempLocation=gs://tmp_xqhu/temp \
+               --enableWorkaround=true"
+```
+
 ## BigQuery Storage API 'f' Field Bug Reproduction
 
 The `LargeBatchBugReproduction` pipeline is specifically designed to reproduce a BigQuery Storage API bug that occurs when using dynamic destinations with TableRow objects containing a field named 'f'.
@@ -268,21 +294,25 @@ The issue is that `TableRow` extends `GenericJson` and has a predefined field na
 
 ### Key Differences Between Pipelines
 
-| Feature | Original Pipeline | Dynamic Destinations Pipeline |
-|---------|------------------|------------------------------|
-| BigQuery Write Method | `BigQueryIO.write()` with format functions | `BigQueryIO.writeTableRows()` |
-| Destination Type | Static table destination | Dynamic destinations with routing |
-| Storage API Method | `STORAGE_WRITE_API` | `STORAGE_API_AT_LEAST_ONCE` |
-| Optimized Writes | Not used | `.optimizedWrites()` enabled |
-| Validation | Default validation | `.withoutValidation()` |
-| Insert IDs | Default behavior | `.ignoreInsertIds()` |
-| Table Routing | Single table | Multiple tables based on data category |
+| Feature | Original Pipeline | Dynamic Destinations Pipeline | Large Batch Pipeline |
+|---------|------------------|------------------------------|---------------------|
+| BigQuery Write Method | `BigQueryIO.write()` with format functions | `BigQueryIO.writeTableRows()` | `BigQueryIO.writeTableRows()` |
+| Destination Type | Static table destination | Dynamic destinations with routing | Dynamic destinations with routing |
+| Storage API Method | `STORAGE_WRITE_API` | `STORAGE_API_AT_LEAST_ONCE` | `STORAGE_API_AT_LEAST_ONCE` |
+| Optimized Writes | Not used | `.optimizedWrites()` enabled | `.optimizedWrites()` enabled |
+| Validation | Default validation | `.withoutValidation()` | `.withoutValidation()` |
+| Insert IDs | Default behavior | `.ignoreInsertIds()` | `.ignoreInsertIds()` |
+| Table Routing | Single table | Multiple tables based on data category | Multiple tables based on data category |
+| Record Size | Small records | Small records | Large records (12MB each) |
+| Workaround Support | Field name workaround | No workaround | `withFormatRecordOnFailureFunction` workaround |
+| Bug Trigger | Direct field assignment | Direct field assignment | Storage API batch size limit + field conflict |
 
 ## Workarounds
 
 1. **Rename the column:** Avoid using 'f' as a column name in your BigQuery schema
 2. **Use a different approach:** Consider using Beam's `TableRow` constructor that takes a map of values
 3. **Custom serialization:** Implement custom serialization logic that handles the 'f' field specially
+4. **Storage API workaround (Large Batch Pipeline):** Use `withFormatRecordOnFailureFunction` to handle the 'f' field conflict during Storage API processing. This workaround is demonstrated in the `LargeBatchBugReproduction` pipeline with the `--enableWorkaround=true` option.
 
 ## Cleanup BigQuery Resources
 
@@ -311,12 +341,32 @@ bq rm -f manav-jit-test:test.dynamic_tablerow_bug_test_guests
 bq rm -f manav-jit-test:test.dynamic_tablerow_bug_test_users
 ```
 
+### Clean up Large Batch Pipeline Tables
+The large batch pipeline creates multiple tables based on data categories. To clean them up:
+
+```bash
+# List all large batch tables (optional - to see what will be deleted)
+bq ls --filter="tableId:large_batch_bug_test*" manav-jit-test:test
+
+# Remove all large batch tables
+bq rm -f manav-jit-test:test.large_batch_bug_test_admins
+bq rm -f manav-jit-test:test.large_batch_bug_test_default  
+bq rm -f manav-jit-test:test.large_batch_bug_test_guests
+bq rm -f manav-jit-test:test.large_batch_bug_test_users
+
+# Remove workaround tables
+bq rm -f manav-jit-test:test.large_batch_bug_test_workaround_admins
+bq rm -f manav-jit-test:test.large_batch_bug_test_workaround_default  
+bq rm -f manav-jit-test:test.large_batch_bug_test_workaround_guests
+bq rm -f manav-jit-test:test.large_batch_bug_test_workaround_users
+```
+
 ### Clean up All Test Tables at Once
-To remove all tables created by both pipelines in one command:
+To remove all tables created by all three pipelines in one command:
 
 ```bash
 # Remove all test tables (use with caution!)
-for table in tablerow_bug_test tablerow_bug_test_workaround dynamic_tablerow_bug_test_admins dynamic_tablerow_bug_test_default dynamic_tablerow_bug_test_guests dynamic_tablerow_bug_test_users; do
+for table in tablerow_bug_test tablerow_bug_test_workaround dynamic_tablerow_bug_test_admins dynamic_tablerow_bug_test_default dynamic_tablerow_bug_test_guests dynamic_tablerow_bug_test_users large_batch_bug_test_admins large_batch_bug_test_default large_batch_bug_test_guests large_batch_bug_test_users large_batch_bug_test_workaround_admins large_batch_bug_test_workaround_default large_batch_bug_test_workaround_guests large_batch_bug_test_workaround_users; do
   bq rm -f manav-jit-test:test.$table 2>/dev/null || true
 done
 ```
