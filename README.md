@@ -19,7 +19,8 @@ df-bq-tests/
 ├── pom.xml                                           # Maven configuration with Beam dependencies
 ├── src/main/java/com/example/
 │   ├── BQTableRowBugReproduction.java               # Original pipeline with format functions
-│   └── DynamicDestinationTableRowBugReproduction.java # Dynamic destinations pipeline
+│   ├── DynamicDestinationTableRowBugReproduction.java # Dynamic destinations pipeline
+│   └── LargeBatchBugReproduction.java               # Large batch pipeline for Storage API bug
 └── README.md                                        # This file
 ```
 
@@ -50,7 +51,7 @@ df-bq-tests/
 
 ## Running the Pipeline
 
-This project contains two different pipeline implementations that reproduce the same TableRow 'f' field bug:
+This project contains three different pipeline implementations that reproduce the same TableRow 'f' field bug:
 
 ### 1. Original Pipeline (BQTableRowBugReproduction)
 Uses `BigQueryIO.write()` with format functions and static table destinations.
@@ -129,6 +130,87 @@ mvn compile exec:java \
                --region=us-central1 \
                --tempLocation=gs://tmp_xqhu/temp"
 ```
+
+### 3. Large Batch Pipeline (LargeBatchBugReproduction)
+Uses `BigQueryIO.writeTableRows()` with Storage API and generates large batches to trigger the specific Storage API bug.
+
+#### Test the Storage API Bug
+```bash
+mvn compile exec:java \
+  -Dexec.mainClass=com.example.LargeBatchBugReproduction \
+  -Dexec.args="--project=manav-jit-test \
+               --dataset=test \
+               --baseTableName=large_batch_bug_test \
+               --runner=DirectRunner"
+```
+
+#### Test with Dataflow Runner
+```bash
+mvn compile exec:java \
+  -Dexec.mainClass=com.example.LargeBatchBugReproduction \
+  -Dexec.args="--project=manav-jit-test \
+               --dataset=test \
+               --baseTableName=large_batch_bug_test \
+               --runner=DataflowRunner \
+               --region=us-central1 \
+               --tempLocation=gs://tmp_xqhu/temp"
+```
+
+## BigQuery Storage API 'f' Field Bug Reproduction
+
+The `LargeBatchBugReproduction` pipeline is specifically designed to reproduce a BigQuery Storage API bug that occurs when using dynamic destinations with TableRow objects containing a field named 'f'.
+
+### The Bug
+
+The bug manifests as the following error sequence:
+
+1. First, a warning about request size:
+   ```
+   A request containing more than one row is over the request size limit of 10000000. This is unexpected. All rows in the request will be sent to the failed-rows PCollection.
+   ```
+
+2. Then, the actual exception:
+   ```
+   java.lang.IllegalArgumentException: Can not set java.util.List field com.google.api.services.bigquery.model.TableRow.f to java.lang.Double
+   ```
+
+### Root Cause
+
+The bug occurs because:
+1. BigQuery Storage API processes records in batches
+2. When a batch exceeds 10MB, it triggers special handling
+3. During this handling, the Storage API tries to access the internal `f` field of TableRow (which is a `List<TableCell>`)
+4. If your data also has a field named 'f', there's a conflict that causes the IllegalArgumentException
+
+### Expected Stack Trace
+
+When the bug is triggered, you should see a stack trace similar to:
+
+```
+java.lang.IllegalArgumentException: Can not set java.util.List field com.google.api.services.bigquery.model.TableRow.f to java.lang.Double
+    at java.base/jdk.internal.reflect.UnsafeFieldAccessorImpl.throwSetIllegalArgumentException(UnsafeFieldAccessorImpl.java:167)
+    at java.base/jdk.internal.reflect.UnsafeFieldAccessorImpl.throwSetIllegalArgumentException(UnsafeFieldAccessorImpl.java:171)
+    at java.base/jdk.internal.reflect.UnsafeObjectFieldAccessorImpl.set(UnsafeObjectFieldAccessorImpl.java:81)
+    at java.base/java.lang.reflect.Field.set(Field.java:780)
+    at com.google.api.client.util.FieldInfo.setFieldValue(FieldInfo.java:281)
+    at com.google.api.client.util.FieldInfo.setValue(FieldInfo.java:237)
+    at com.google.api.client.util.GenericData.put(GenericData.java:98)
+    at org.apache.beam.sdk.io.gcp.bigquery.TableRowToStorageApiProto.tableRowFromMessage(TableRowToStorageApiProto.java:1115)
+    at org.apache.beam.sdk.io.gcp.bigquery.TableRowToStorageApiProto.jsonValueFromMessageValue(TableRowToStorageApiProto.java:1140)
+    at org.apache.beam.sdk.io.gcp.bigquery.TableRowToStorageApiProto.tableRowFromMessage(TableRowToStorageApiProto.java:1117)
+    at org.apache.beam.sdk.io.gcp.bigquery.TableRowToStorageApiProto.jsonValueFromMessageValue(TableRowToStorageApiProto.java:1140)
+    at org.apache.beam.sdk.io.gcp.bigquery.TableRowToStorageApiProto.tableRowFromMessage(TableRowToStorageApiProto.java:1117)
+    at org.apache.beam.sdk.io.gcp.bigquery.TableRowToStorageApiProto.tableRowFromMessage(TableRowToStorageApiProto.java:1098)
+    at org.apache.beam.sdk.io.gcp.bigquery.StorageApiWriteUnshardedRecords$WriteRecordsDoFn$DestinationState.flush(StorageApiWriteUnshardedRecords.java:655)
+    at org.apache.beam.sdk.io.gcp.bigquery.StorageApiWriteUnshardedRecords$WriteRecordsDoFn.flushAll(StorageApiWriteUnshardedRecords.java:1042)
+    at org.apache.beam.sdk.io.gcp.bigquery.StorageApiWriteUnshardedRecords$WriteRecordsDoFn.finishBundle(StorageApiWriteUnshardedRecords.java:1207)
+```
+
+### Notes
+
+- The `LargeBatchBugReproduction` pipeline is designed to fail with the specific error - this is expected behavior for bug reproduction
+- The bug only occurs with Storage API (`STORAGE_API_AT_LEAST_ONCE` method) and dynamic destinations
+- Use this pipeline for the most reliable reproduction of the exact error condition
 
 ## Expected Error
 
